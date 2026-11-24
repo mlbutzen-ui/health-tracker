@@ -340,3 +340,19 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .episode-q + .episode-q { border-top: 1px solid var(--line); }
 .episode-text { flex: 1; font-size: .92rem; }
 .seg-yn { flex: none; width: 128px; flex-wrap: nowrap; }
+
+/* ----- migraine carry-over ----- */
+.carry { margin-top: 12px; padding: 12px; border-radius: 12px; background: var(--accent-soft); display: grid; gap: 10px; }
+.carry-q { font-weight: 650; }
+
+/* ----- head pain diagrams ----- */
+.head-views { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.head-view { text-align: center; }
+.head-svg { width: 100%; height: auto; display: block; background: var(--chip); border-radius: 12px; touch-action: manipulation; cursor: crosshair; }
+.hd-skin { fill: var(--card); stroke: var(--muted); stroke-width: 2; stroke-linejoin: round; }
+.hd-line { fill: none; stroke: var(--muted); stroke-width: 2; }
+.hd-guide { stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 4 5; }
+.hd-text { fill: var(--muted); font-size: 12px; text-anchor: middle; pointer-events: none; }
+.hd-big { font-size: 16px; font-weight: 700; }
+.hd-mark circle { fill: #d93025; fill-opacity: .85; stroke: #fff; stroke-width: 2; }
+.hd-mark text { fill: #fff; font-size: 12px; font-weight: 700; text-anchor: middle; pointer-events: none; }

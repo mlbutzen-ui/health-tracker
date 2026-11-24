@@ -153,6 +153,8 @@ export function newEntry(date) {
       status: null,
       kind: null, // 'migraine' | 'headache'
       ended: null, // did it end today? true | false | null (migraines can last days)
+      continued: false, // true when carried over from yesterday's unended migraine
+      painMap: [], // [{ view: 'top'|'side', x, y }] marks tapped on the head diagrams
       impact: null,
       locations: [],
       symptoms: [],

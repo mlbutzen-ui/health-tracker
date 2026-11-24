@@ -4,7 +4,7 @@ import {
   BRISTOL, newEntry, newOtherItem, normalizeEntry, uid,
 } from './defaults.js';
 
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 const S = {
   view: 'checkin',
@@ -418,7 +418,7 @@ function symptomSection(key, title, noText, yesText, bodyFn) {
     card.append(h('div', { class: 'choice-row' },
       h('button', { class: 'btn btn-none', onclick: () => setStatus(key, 'none') }, '✓ ', noText),
       h('button', { class: 'btn btn-yes', onclick: () => setStatus(key, 'yes') }, yesText)));
-    const still = key === 'other' && stillHaveButtons();
+    const still = key === 'other' ? stillHaveButtons() : key === 'migraine' ? migraineCarryOver() : null;
     if (still) card.append(still);
   } else if (sec.status === 'none') {
     card.append(h('div', { class: 'none-row' },
@@ -497,7 +497,11 @@ function migraineBody(s) {
 
     field('How much did it affect your day? (at its worst)', impactPicker(s.impact, (v) => upd((e) => { e.migraine.impact = v; }), 'Pain')),
 
-    field('Where was the pain?',
+    field('Mark where the pain is',
+      h('p', { class: 'hint' }, 'Tap the head to mark each spot. Tap a mark to remove it.'),
+      painMap(s.painMap)),
+
+    field('Where was the pain? (from your list)',
       chips('migLocations', s.locations, (name, on) => upd((e) => toggleIn(e.migraine.locations, name, on)))),
 
     field('Symptoms',
@@ -518,6 +522,81 @@ function migraineBody(s) {
 }
 
 /* ----- Other ----- */
+
+/* ----- migraine: carry over & head diagrams ----- */
+
+function migraineCarryOver() {
+  const pm = S.prev?.migraine;
+  if (!pm || pm.status !== 'yes' || pm.ended !== false) return null;
+  const what = pm.kind === 'headache' ? 'headache' : 'migraine';
+  return h('div', { class: 'carry' },
+    h('div', { class: 'carry-q' }, `Still have your ${what} from yesterday?`),
+    h('button', {
+      class: 'btn btn-primary',
+      onclick: () => upd((e) => {
+        Object.assign(e.migraine, {
+          status: 'yes', kind: pm.kind, continued: true,
+          symptoms: [...pm.symptoms], triggers: [...pm.triggers],
+        });
+      }),
+    }, 'Yes, still have it'));
+}
+
+const SVGNS = 'http://www.w3.org/2000/svg';
+function sv(tag, attrs = {}, ...kids) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+  }
+  kids.flat().forEach((k) => k != null && el.append(k.nodeType ? k : document.createTextNode(String(k))));
+  return el;
+}
+
+const HEAD_VIEWS = {
+  top: {
+    title: 'Top of head',
+    draw: () => [
+      sv('path', { class: 'hd-skin', d: 'M100 36 C150 36 170 84 168 128 C166 184 140 220 100 220 C60 220 34 184 32 128 C30 84 50 36 100 36 Z' }),
+      sv('path', { class: 'hd-skin', d: 'M90 40 L100 22 L110 40' }),
+      sv('path', { class: 'hd-line', d: 'M33 112 C21 115 21 143 33 146 M167 112 C179 115 179 143 167 146' }),
+      sv('path', { class: 'hd-guide', d: 'M100 44 L100 212' }),
+      sv('text', { x: 100, y: 14, class: 'hd-text' }, 'Front (face)'),
+      sv('text', { x: 100, y: 238, class: 'hd-text' }, 'Back'),
+      sv('text', { x: 12, y: 133, class: 'hd-text hd-big' }, 'L'),
+      sv('text', { x: 188, y: 133, class: 'hd-text hd-big' }, 'R'),
+    ],
+  },
+  side: {
+    title: 'Side view',
+    draw: () => [
+      sv('path', { class: 'hd-skin', d: 'M72 226 C70 204 58 188 50 168 C30 140 28 96 45 66 C65 30 115 20 145 36 C162 46 168 66 166 86 L168 96 C172 103 182 112 184 120 C185 125 178 128 172 128 C174 134 176 138 172 142 C175 146 174 150 170 153 C172 160 172 168 164 172 C150 178 135 176 125 172 C122 190 125 210 128 226 Z' }),
+      sv('ellipse', { class: 'hd-line', cx: 96, cy: 118, rx: 10, ry: 16 }),
+      sv('path', { class: 'hd-line', d: 'M146 96 C152 93 158 93 162 96' }),
+      sv('text', { x: 170, y: 18, class: 'hd-text' }, 'Front →'),
+      sv('text', { x: 30, y: 18, class: 'hd-text' }, '← Back'),
+    ],
+  },
+};
+
+function painMap(marks) {
+  const view = (key) => {
+    const v = HEAD_VIEWS[key];
+    const svg = sv('svg', { viewBox: '0 0 200 244', class: 'head-svg', role: 'img', 'aria-label': `${v.title}: tap to mark pain` },
+      v.draw(),
+      marks.map((m, i) => (m.view !== key ? null : sv('g', {
+        class: 'hd-mark',
+        onclick: (ev) => { ev.stopPropagation(); upd((e) => { e.migraine.painMap.splice(i, 1); }); },
+      }, sv('circle', { cx: m.x, cy: m.y, r: 11 }), sv('text', { x: m.x, y: m.y + 4 }, i + 1)))));
+    svg.addEventListener('click', (ev) => {
+      const pt = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(svg.getScreenCTM().inverse());
+      upd((e) => { e.migraine.painMap.push({ view: key, x: Math.round(pt.x), y: Math.round(pt.y) }); });
+    });
+    return h('div', { class: 'head-view' }, h('div', { class: 'mini-label' }, v.title), svg);
+  };
+  return h('div', {},
+    h('div', { class: 'head-views' }, view('top'), view('side')),
+    marks.length > 0 && h('button', { class: 'link small muted', onclick: () => upd((e) => { e.migraine.painMap = []; }) }, 'Clear all marks'));
+}
 
 function stillHaveButtons() {
   const prevItems = S.prev?.other?.status === 'yes' ? S.prev.other.items.filter((i) => i.condition) : [];

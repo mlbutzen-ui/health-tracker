@@ -4,7 +4,7 @@ export const LIST_GROUPS = [
   { title: 'IBS', lists: ['ibsSymptoms', 'ibsFoods', 'ibsTriggers', 'ibsMeds'] },
   { title: 'Migraine / headache', lists: ['migLocations', 'migSymptoms', 'migTriggers', 'migMeds'] },
   { title: 'Other health issues', lists: ['otherConditions', 'otherSymptoms', 'otherMeds'] },
-  { title: 'Daily habits & new things', lists: ['exerciseTypes', 'newCategories'] },
+  { title: 'Daily habits & new things', lists: ['stressSigns', 'exerciseTypes', 'newCategories'] },
 ];
 
 export const LIST_LABELS = {
@@ -19,6 +19,7 @@ export const LIST_LABELS = {
   otherConditions: 'Conditions (what it was)',
   otherSymptoms: 'Symptoms',
   otherMeds: 'Medications & remedies',
+  stressSigns: 'Stress signs',
   exerciseTypes: 'Exercise types',
   newCategories: '"Something new" categories',
 };
@@ -30,6 +31,8 @@ export const DEFAULT_LISTS = {
   migLocations: [], migSymptoms: [], migTriggers: [], migMeds: [],
   otherConditions: [], otherSymptoms: [], otherMeds: [],
   exerciseTypes: [],
+  stressSigns: ['Trouble sleeping', 'Tense jaw or shoulders', 'Racing thoughts', 'Irritability',
+    'Trouble concentrating', 'Appetite changes', 'Avoiding tasks', 'Crying'],
   newCategories: ['Food', 'Drink', 'Restaurant', 'Activity', 'Product', 'Supplement',
     'Medication', 'Place', 'Other'],
 };
@@ -93,6 +96,25 @@ export const EPISODE_QUESTIONS = [
   { id: 'diarrhea', q: 'Did it result in diarrhea?' },
   { id: 'fainted', q: 'Did you faint?' },
 ];
+
+// Stress: a descriptive five-level scale (replaced the old 0-10 rating).
+export const STRESS_SCALE = [
+  { v: 0, label: 'Calm', desc: 'Little or no stress. Things felt manageable without effort.' },
+  { v: 1, label: 'Manageable', desc: 'Some stress, but it stayed in the background and didn\u2019t change my day.' },
+  { v: 2, label: 'Stretched', desc: 'Stress was on my mind a lot. I had to push to focus or stay patient, but I still got things done.' },
+  { v: 3, label: 'Overwhelmed', desc: 'Stress took over parts of my day. I avoided tasks, snapped at people, or couldn\u2019t concentrate.' },
+  { v: 4, label: 'Crisis', desc: 'I couldn\u2019t function normally. I shut down, cried, couldn\u2019t sleep, or had to cancel plans.' },
+];
+
+// Old 0-10 stress rating to the closest level: 0-1 Calm, 2-3 Manageable, 4-6 Stretched,
+// 7-8 Overwhelmed, 9-10 Crisis.
+export function stressFromOld(n) {
+  if (n <= 1) return 0;
+  if (n <= 3) return 1;
+  if (n <= 6) return 2;
+  if (n <= 8) return 3;
+  return 4;
+}
 
 // "Did it help?" scale: 0 = not at all, 4 = completely fixed it.
 export const HELP_SCALE = [
@@ -169,7 +191,10 @@ export function newEntry(date) {
     daily: {
       sleepHours: null,
       sleepQuality: null,
-      stress: null,
+      stressLevel: null, // 0-4, see STRESS_SCALE
+      stressConverted: false, // true when converted from an old 0-10 rating
+      stressOriginal: null, // the old 0-10 rating, kept for reference
+      stressSigns: [],
       water: null,
       exercised: null, // true | false | null
       exTypes: [],
@@ -204,6 +229,16 @@ export function normalizeEntry(saved, date) {
     if (b && typeof b === 'object' && !Array.isArray(b)) base[k] = { ...b, ...saved[k] };
     else base[k] = saved[k];
   }
+  // Convert an old 0-10 stress rating once, keeping the original value.
+  const d = base.daily;
+  if (typeof d.stress === 'number') {
+    if (d.stressLevel == null) {
+      d.stressLevel = stressFromOld(d.stress);
+      d.stressConverted = true;
+      d.stressOriginal = d.stress;
+    }
+    delete d.stress;
+  } else if ('stress' in d) delete d.stress;
   return base;
 }
 

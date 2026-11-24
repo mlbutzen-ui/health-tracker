@@ -148,20 +148,6 @@ button:disabled { opacity: .35; cursor: default; }
 .link.muted { color: var(--muted); }
 .link.danger { color: var(--danger); }
 
-/* ----- 0-10 scale ----- */
-.scale-btns { display: grid; grid-template-columns: repeat(11, 1fr); gap: 3px; }
-.sbtn {
-  height: 42px; padding: 0; border-radius: 8px;
-  border: 1px solid var(--line); background: var(--chip);
-  font-weight: 600; font-size: .95rem;
-}
-.sbtn.on {
-  background: hsl(calc(145 - var(--n) * 14) 62% 42%);
-  border-color: transparent; color: #fff;
-  transform: scale(1.08);
-}
-.scale-ends { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-top: 4px; }
-
 /* ----- segmented ----- */
 .seg { display: flex; gap: 4px; flex-wrap: wrap; }
 .seg-btn {
@@ -356,3 +342,5 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .hd-big { font-size: 16px; font-weight: 700; }
 .hd-mark circle { fill: #d93025; fill-opacity: .85; stroke: #fff; stroke-width: 2; }
 .hd-mark text { fill: #fff; font-size: 12px; font-weight: 700; text-anchor: middle; pointer-events: none; }
+
+.hint.converted { color: var(--accent); font-weight: 600; }

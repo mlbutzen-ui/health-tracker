@@ -1,10 +1,10 @@
 import * as db from './db.js';
 import {
-  LIST_GROUPS, LIST_LABELS, DEFAULT_LISTS, SUGGESTIONS, impactScale, EPISODE_QUESTIONS, HELP_SCALE, SEVERITY3, SLEEP_QUALITY, INTENSITY,
+  LIST_GROUPS, LIST_LABELS, DEFAULT_LISTS, SUGGESTIONS, impactScale, STRESS_SCALE, EPISODE_QUESTIONS, HELP_SCALE, SEVERITY3, SLEEP_QUALITY, INTENSITY,
   BRISTOL, newEntry, newOtherItem, normalizeEntry, uid,
 } from './defaults.js';
 
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.5.0';
 
 const S = {
   view: 'checkin',
@@ -220,20 +220,14 @@ function field(label, ...content) {
   return h('div', { class: 'field' }, label && h('div', { class: 'label' }, label), ...content);
 }
 
-function scale10(value, onSet, low = 'None', high = 'Worst') {
-  return h('div', { class: 'scale10' },
-    h('div', { class: 'scale-btns' }, Array.from({ length: 11 }, (_, n) => h('button', {
-      class: 'sbtn' + (value === n ? ' on' : ''),
-      style: { '--n': n },
-      'aria-pressed': value === n ? 'true' : 'false',
-      onclick: () => onSet(value === n ? null : n),
-    }, n))),
-    h('div', { class: 'scale-ends' }, h('span', {}, `0 = ${low}`), h('span', {}, `10 = ${high}`)));
-}
-
 // Impact-on-my-day scale (0-4), shown as a vertical list with descriptions.
 function impactPicker(value, onSet, noun = 'Symptoms') {
-  return h('div', { class: 'impact' }, impactScale(noun).map((o) => h('button', {
+  return levelPicker(impactScale(noun), value, onSet);
+}
+
+// Vertical list of levels, each with a short label and a full description.
+function levelPicker(options, value, onSet) {
+  return h('div', { class: 'impact' }, options.map((o) => h('button', {
     class: 'impact-btn' + (value === o.v ? ' on' : ''),
     style: { '--n': o.v },
     'aria-pressed': value === o.v ? 'true' : 'false',
@@ -669,7 +663,13 @@ function dailySection(e) {
           stepper(d.sleepHours, (v, rr = true) => set((x) => { x.sleepHours = v; }, rr), { step: 0.5, max: 24, start: 7 })),
         h('div', { class: 'mini-label mt' }, 'Quality'),
         seg(SLEEP_QUALITY, d.sleepQuality, (v) => set((x) => { x.sleepQuality = v; }), 'seg-5')),
-      field('Stress level', scale10(d.stress, (v) => set((x) => { x.stress = v; }), 'None', 'Extreme')),
+      field('Stress today',
+        h('p', { class: 'hint' }, 'Pick the description that best matches your day.'),
+        levelPicker(STRESS_SCALE, d.stressLevel, (v) => set((x) => { x.stressLevel = v; x.stressConverted = false; })),
+        d.stressConverted && d.stressLevel != null && h('p', { class: 'hint converted' },
+          `Converted from your old 0\u201310 rating (${d.stressOriginal}). Tap a level to confirm or change it.`),
+        h('div', { class: 'mini-label mt' }, 'Stress signs you noticed (optional)'),
+        chips('stressSigns', d.stressSigns, (name, on) => set((x) => toggleIn(x.stressSigns, name, on)), { addLabel: '+ Add other' })),
       field('Water',
         h('div', { class: 'row-between' }, h('span', { class: 'muted' }, 'Cups (8 oz)'),
           stepper(d.water, (v, rr = true) => set((x) => { x.water = v; }, rr), { max: 30, start: 1 }))),
@@ -848,6 +848,7 @@ function renameInEntry(e, key, from, to) {
     case 'otherSymptoms': return any((it) => strArr(it.symptoms));
     case 'otherMeds': return any((it) => objArr(it.meds));
     case 'exerciseTypes': return strArr(e.daily.exTypes);
+    case 'stressSigns': return strArr(e.daily.stressSigns);
     case 'newCategories': return e.newThings.map((n) => (n.category === from ? ((n.category = to), true) : false)).some(Boolean);
     default: return false;
   }
@@ -870,6 +871,7 @@ function namesUsed(e, key) {
     case 'otherSymptoms': return items.flatMap((it) => it.symptoms);
     case 'otherMeds': return items.flatMap((it) => names(it.meds));
     case 'exerciseTypes': return e.daily.exTypes;
+    case 'stressSigns': return e.daily.stressSigns;
     default: return [];
   }
 }
@@ -878,11 +880,17 @@ function namesUsed(e, key) {
 async function trimUnusedListItems() {
   const entries = (await db.allEntries()).map((e) => normalizeEntry(e, e.date));
   for (const key of Object.keys(S.lists)) {
-    if (key === 'newCategories') continue;
+    if (key === 'newCategories' || key === 'stressSigns') continue;
     const used = new Set(entries.flatMap((e) => namesUsed(e, key)));
     S.lists[key] = S.lists[key].filter((x) => used.has(x));
   }
   await saveLists();
+}
+
+// Version 1.5: stress moved from 0-10 to five levels. Save converted entries once.
+async function convertOldStressRatings() {
+  const old = (await db.allEntries()).filter((e) => e.daily && 'stress' in e.daily);
+  if (old.length) await db.putEntries(old.map((e) => normalizeEntry(e, e.date)));
 }
 
 function aboutCard() {
@@ -1160,6 +1168,8 @@ async function init() {
   if (!lists) await saveLists();
   else if ((await db.getMeta('listsVersion')) !== 2) await trimUnusedListItems();
   await db.setMeta('listsVersion', 2);
+  await convertOldStressRatings();
+  await saveLists(); // stores any lists added in newer versions
   S.settings = { ...S.settings, ...(settings || {}) };
   S.pin = pin || null;
   S.lastBackup = lastBackup || null;

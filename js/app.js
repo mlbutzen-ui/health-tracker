@@ -1,10 +1,10 @@
 import * as db from './db.js';
 import {
-  LIST_GROUPS, LIST_LABELS, DEFAULT_LISTS, HELP_SCALE, SEVERITY3, SLEEP_QUALITY, INTENSITY,
+  LIST_GROUPS, LIST_LABELS, DEFAULT_LISTS, SUGGESTIONS, impactScale, HELP_SCALE, SEVERITY3, SLEEP_QUALITY, INTENSITY,
   BRISTOL, newEntry, newOtherItem, normalizeEntry, uid,
 } from './defaults.js';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 const S = {
   view: 'checkin',
@@ -38,7 +38,7 @@ function h(tag, attrs, ...kids) {
     else if (k === 'class') el.className = v;
     else if (k === 'value') el.value = v;
     else if (k === 'checked' || k === 'disabled' || k === 'hidden') el[k] = !!v;
-    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'style' && typeof v === 'object') for (const [sk, sv] of Object.entries(v)) el.style.setProperty(sk, String(sv));
     else el.setAttribute(k, v === true ? '' : v);
   }
   for (const kid of kids.flat(Infinity)) {
@@ -102,14 +102,17 @@ function confirmBox(title, text, okLabel = 'OK', danger = false) {
   });
 }
 
-function askText(title, initial = '', placeholder = '', okLabel = 'Save') {
-  const inp = h('input', { type: 'text', class: 'text-in', value: initial, placeholder, autocomplete: 'off' });
+function askText(title, initial = '', placeholder = '', okLabel = 'Save', { suggestions = [], hint = '' } = {}) {
+  const listId = 'sugg-' + uid();
+  const inp = h('input', { type: 'text', class: 'text-in', value: initial, placeholder, autocomplete: 'off', list: suggestions.length ? listId : null });
   inp.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') inp.closest('.modal').querySelector('.btn-primary').click();
   });
   return modal({
     title,
-    body: inp,
+    body: h('div', {}, inp,
+      suggestions.length > 0 && h('datalist', { id: listId }, suggestions.map((x) => h('option', { value: x }))),
+      hint && h('p', { class: 'hint' }, hint)),
     actions: [{ label: 'Cancel', value: null }, { label: okLabel, kind: 'btn-primary', value: () => inp.value.trim() || null }],
   });
 }
@@ -228,6 +231,28 @@ function scale10(value, onSet, low = 'None', high = 'Worst') {
     h('div', { class: 'scale-ends' }, h('span', {}, `0 = ${low}`), h('span', {}, `10 = ${high}`)));
 }
 
+// Impact-on-my-day scale (0-4), shown as a vertical list with descriptions.
+function impactPicker(value, onSet, noun = 'Symptoms') {
+  return h('div', { class: 'impact' }, impactScale(noun).map((o) => h('button', {
+    class: 'impact-btn' + (value === o.v ? ' on' : ''),
+    style: { '--n': o.v },
+    'aria-pressed': value === o.v ? 'true' : 'false',
+    onclick: () => onSet(value === o.v ? null : o.v),
+  }, h('span', { class: 'impact-label' }, o.label), h('span', { class: 'impact-desc' }, o.desc))));
+}
+
+function suggestionsFor(listKey) {
+  const have = new Set(S.lists[listKey].map((x) => x.toLowerCase()));
+  return (SUGGESTIONS[listKey] || []).filter((x) => !have.has(x.toLowerCase()));
+}
+
+async function askNewItem(listKey) {
+  return askText(`Add to "${LIST_LABELS[listKey]}"`, '', 'Type a name', 'Add', {
+    suggestions: suggestionsFor(listKey),
+    hint: 'It will also be offered on future days. You can rename or remove it in Settings.',
+  });
+}
+
 function seg(options, value, onSet, extraClass = '') {
   return h('div', { class: 'seg ' + extraClass },
     options.map((o) => h('button', {
@@ -238,7 +263,7 @@ function seg(options, value, onSet, extraClass = '') {
 }
 
 // Chip checklist from an editable list. "+ Add" adds a new item to the list and selects it.
-function chips(listKey, selected, onToggle, { single = false, addLabel = '+ Add other' } = {}) {
+function chips(listKey, selected, onToggle, { single = false, addLabel = '+ Add' } = {}) {
   const items = [...S.lists[listKey]];
   selected.forEach((s) => { if (s && !items.includes(s)) items.push(s); });
   return h('div', { class: 'chips' + (single ? ' single' : '') },
@@ -253,11 +278,11 @@ function chips(listKey, selected, onToggle, { single = false, addLabel = '+ Add 
     h('button', {
       class: 'chip chip-add',
       onclick: async () => {
-        const name = await askText(`Add to "${LIST_LABELS[listKey]}"`, '', 'Type a name', 'Add');
+        const name = await askNewItem(listKey);
         if (!name) return;
         const existing = S.lists[listKey].find((x) => x.toLowerCase() === name.toLowerCase());
         const finalName = existing || name;
-        if (!existing) { S.lists[listKey].push(name); await saveLists(); toast(`Added "${name}" to your list`); }
+        if (!existing) { S.lists[listKey].push(name); await saveLists(); }
         if (!selected.includes(finalName)) onToggle(finalName, true);
       },
     }, addLabel));
@@ -411,7 +436,7 @@ function ibsBody(s) {
   const symNames = s.symptoms.map((x) => x.name);
   const medNames = s.meds.map((x) => x.name);
   return h('div', { class: 'card-body' },
-    field('Overall severity today', scale10(s.severity, (v) => upd((e) => { e.ibs.severity = v; }))),
+    field('How much did IBS affect your day?', impactPicker(s.impact, (v) => upd((e) => { e.ibs.impact = v; }))),
 
     field('Symptoms',
       chips('ibsSymptoms', symNames, (name, on) => upd((e) => toggleObj(e.ibs.symptoms, name, on, (n) => ({ name: n, sev: null })))),
@@ -468,7 +493,7 @@ function migraineBody(s) {
         h('input', { type: 'checkbox', checked: s.ongoing, onchange: (ev) => upd((e) => { e.migraine.ongoing = ev.target.checked; }, false) }),
         ' Still going when I logged this')),
 
-    field('Peak pain', scale10(s.peak, (v) => upd((e) => { e.migraine.peak = v; }))),
+    field('How much did it affect your day? (at its worst)', impactPicker(s.impact, (v) => upd((e) => { e.migraine.impact = v; }), 'Pain')),
 
     field('Where was the pain?',
       chips('migLocations', s.locations, (name, on) => upd((e) => toggleIn(e.migraine.locations, name, on)))),
@@ -537,7 +562,7 @@ function otherItem(it, idx, total) {
     field('What was it?', chips('otherConditions', it.condition ? [it.condition] : [],
       (name, on) => set((x) => { x.condition = on ? name : ''; }), { single: true })),
     field('Symptoms', chips('otherSymptoms', it.symptoms, (name, on) => set((x) => toggleIn(x.symptoms, name, on)))),
-    field('Severity', scale10(it.severity, (v) => set((x) => { x.severity = v; }))),
+    field('How much did it affect your day?', impactPicker(it.impact, (v) => set((x) => { x.impact = v; }))),
     field('Fever?',
       seg([{ v: false, label: 'No' }, { v: true, label: 'Yes' }], it.fever, (v) => set((x) => { x.fever = v; if (!v) x.temp = null; })),
       it.fever && h('label', { class: 'inline-field mt' }, h('span', {}, 'Highest temperature'),
@@ -656,7 +681,7 @@ function listsCard() {
   return h('section', { class: 'card' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Your lists')),
     h('div', { class: 'card-body' },
-      h('p', { class: 'small muted' }, 'Add, rename, reorder or remove the options shown in your check-in. Renaming also updates past entries. Removing an item keeps it in past entries.'),
+      h('p', { class: 'small muted' }, 'Anything you add during a check-in is saved here and offered on future days. You can also add, rename, reorder or remove items here. Renaming also updates past entries. Removing an item keeps it in past entries.'),
       LIST_GROUPS.map((g) => h('div', { class: 'list-group' },
         h('h3', {}, g.title),
         g.lists.map((key) => listEditor(key))))));
@@ -666,6 +691,7 @@ function listEditor(key) {
   const items = S.lists[key];
   const det = h('details', { class: 'list-ed', open: S.openLists.has(key) },
     h('summary', {}, h('span', {}, LIST_LABELS[key]), h('span', { class: 'count' }, items.length)),
+    items.length === 0 && h('p', { class: 'hint' }, 'Nothing yet. Items you add during a check-in show up here.'),
     h('ul', {}, items.map((name, i) => h('li', {},
       h('span', { class: 'li-name' }, name),
       h('button', { class: 'icon-btn small', 'aria-label': `Move ${name} up`, disabled: i === 0, onclick: () => moveItem(key, i) }, '↑'),
@@ -677,7 +703,7 @@ function listEditor(key) {
 }
 
 async function addItem(key) {
-  const name = await askText(`Add to "${LIST_LABELS[key]}"`, '', 'Type a name', 'Add');
+  const name = await askNewItem(key);
   if (!name) return;
   if (S.lists[key].some((x) => x.toLowerCase() === name.toLowerCase())) { toast('That’s already in the list'); return; }
   S.lists[key].push(name);
@@ -746,6 +772,38 @@ function renameInEntry(e, key, from, to) {
   }
 }
 
+// Every list item a past entry actually used, per list.
+function namesUsed(e, key) {
+  const names = (arr) => arr.map((o) => o.name);
+  const items = e.other.items;
+  switch (key) {
+    case 'ibsSymptoms': return names(e.ibs.symptoms);
+    case 'ibsFoods': return e.ibs.foods;
+    case 'ibsTriggers': return e.ibs.triggers;
+    case 'ibsMeds': return names(e.ibs.meds);
+    case 'migLocations': return e.migraine.locations;
+    case 'migSymptoms': return e.migraine.symptoms;
+    case 'migTriggers': return e.migraine.triggers;
+    case 'migMeds': return names(e.migraine.meds);
+    case 'otherConditions': return items.map((it) => it.condition).filter(Boolean);
+    case 'otherSymptoms': return items.flatMap((it) => it.symptoms);
+    case 'otherMeds': return items.flatMap((it) => names(it.meds));
+    case 'exerciseTypes': return e.daily.exTypes;
+    default: return [];
+  }
+}
+
+// Version 1.1: lists start empty. Trim the old pre-filled lists down to what was actually used.
+async function trimUnusedListItems() {
+  const entries = (await db.allEntries()).map((e) => normalizeEntry(e, e.date));
+  for (const key of Object.keys(S.lists)) {
+    if (key === 'newCategories') continue;
+    const used = new Set(entries.flatMap((e) => namesUsed(e, key)));
+    S.lists[key] = S.lists[key].filter((x) => used.has(x));
+  }
+  await saveLists();
+}
+
 function aboutCard() {
   return h('section', { class: 'card' },
     h('div', { class: 'card-head' }, h('h2', {}, 'About')),
@@ -786,6 +844,7 @@ async function doBackup(share = false) {
     appVersion: APP_VERSION,
     exportedAt: new Date().toISOString(),
     lists: S.lists,
+    listsVersion: 2,
     settings: S.settings,
     entries: await db.allEntries(),
   };
@@ -833,7 +892,7 @@ async function doRestore(file) {
   if (!ok) return;
   const lists = { ...clone(DEFAULT_LISTS), ...(data.lists || {}) };
   const entries = data.entries.filter((e) => e && typeof e.date === 'string').map((e) => normalizeEntry(e, e.date));
-  await db.replaceAll(entries, { lists, settings: { ...S.settings, ...(data.settings || {}) } });
+  await db.replaceAll(entries, { lists, listsVersion: data.listsVersion || 1, settings: { ...S.settings, ...(data.settings || {}) } });
   toast('Backup restored');
   setTimeout(() => location.reload(), 800);
 }
@@ -1018,6 +1077,8 @@ async function init() {
   ]);
   S.lists = { ...clone(DEFAULT_LISTS), ...(lists || {}) };
   if (!lists) await saveLists();
+  else if ((await db.getMeta('listsVersion')) !== 2) await trimUnusedListItems();
+  await db.setMeta('listsVersion', 2);
   S.settings = { ...S.settings, ...(settings || {}) };
   S.pin = pin || null;
   S.lastBackup = lastBackup || null;

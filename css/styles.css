@@ -316,3 +316,21 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .pin-ok { width: 100%; margin-top: 10px; }
 .shake .pin-dots { animation: shake .35s; }
 @keyframes shake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+
+/* ----- impact on my day ----- */
+.impact { display: grid; gap: 6px; }
+.impact-btn {
+  display: flex; flex-direction: column; align-items: flex-start; text-align: left;
+  min-height: 52px; padding: 8px 12px 8px 16px; position: relative;
+  border-radius: 10px; border: 1px solid var(--line); background: var(--chip);
+}
+.impact-btn::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 5px; border-radius: 0 4px 4px 0;
+  background: hsl(calc(145 - var(--n) * 36) 60% 45%);
+}
+.impact-label { font-weight: 650; font-size: .95rem; }
+.impact-desc { font-size: .82rem; color: var(--muted); line-height: 1.25; }
+.impact-btn.on { border-color: transparent; background: hsl(calc(145 - var(--n) * 36) 60% 40%); color: #fff; }
+.impact-btn.on .impact-desc { color: rgba(255, 255, 255, .9); }
+.impact-btn.on .impact-label::before { content: "✓ "; }
+.subrow .impact-btn:not(.on) { background: var(--card); }

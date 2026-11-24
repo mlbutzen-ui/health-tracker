@@ -23,7 +23,19 @@ export const LIST_LABELS = {
   newCategories: '"Something new" categories',
 };
 
+// Lists start empty: you add items as they come up, and they stay for future days.
+// The one exception is the "something new" categories, which feed a dropdown.
 export const DEFAULT_LISTS = {
+  ibsSymptoms: [], ibsFoods: [], ibsTriggers: [], ibsMeds: [],
+  migLocations: [], migSymptoms: [], migTriggers: [], migMeds: [],
+  otherConditions: [], otherSymptoms: [], otherMeds: [],
+  exerciseTypes: [],
+  newCategories: ['Food', 'Drink', 'Restaurant', 'Activity', 'Product', 'Supplement',
+    'Medication', 'Place', 'Other'],
+};
+
+// Common options, offered only as type-ahead suggestions in the "Add" box.
+export const SUGGESTIONS = {
   ibsSymptoms: ['Abdominal pain', 'Cramping', 'Bloating', 'Gas', 'Diarrhea', 'Constipation',
     'Urgency', 'Nausea', 'Incomplete emptying', 'Mucus in stool'],
   ibsFoods: ['Dairy', 'Wheat / gluten', 'Onion', 'Garlic', 'Beans / lentils', 'Spicy food',
@@ -58,6 +70,19 @@ export const DEFAULT_LISTS = {
   newCategories: ['Food', 'Drink', 'Restaurant', 'Activity', 'Product', 'Supplement',
     'Medication', 'Place', 'Other'],
 };
+
+// Impact scale: rates how much symptoms affected the day, not how bad they felt.
+// `noun` is "Pain" or "Symptoms".
+export function impactScale(noun) {
+  const n = noun.toLowerCase();
+  return [
+    { v: 0, label: 'None', desc: `No ${n}` },
+    { v: 1, label: 'No impact', desc: `${noun}, but I could do all my activities` },
+    { v: 2, label: 'Some impact', desc: `${noun} limited my activities slightly or somewhat` },
+    { v: 3, label: 'Major impact', desc: `${noun} significantly limited my activities` },
+    { v: 4, label: 'Couldn\u2019t function', desc: `${noun} stopped me from doing anything I had planned` },
+  ];
+}
 
 // "Did it help?" scale: 0 = not at all, 4 = completely fixed it.
 export const HELP_SCALE = [
@@ -104,7 +129,7 @@ export function newEntry(date) {
     updatedAt: null,
     ibs: {
       status: null, // null = not answered, 'none' = no symptoms, 'yes' = had symptoms
-      severity: null,
+      impact: null, // 0-4, see impactScale()
       symptoms: [], // [{ name, sev: 'mild'|'moderate'|'severe'|null }]
       bms: [], // [{ bristol: 1-7|null }]
       foods: [],
@@ -119,7 +144,7 @@ export function newEntry(date) {
       durH: null,
       durM: null,
       ongoing: false,
-      peak: null,
+      impact: null,
       locations: [],
       symptoms: [],
       meds: [], // [{ name, time, helped }]
@@ -150,7 +175,7 @@ export function newOtherItem() {
     id: uid(),
     condition: '',
     symptoms: [],
-    severity: null,
+    impact: null,
     fever: null,
     temp: null,
     meds: [], // [{ name, helped }]

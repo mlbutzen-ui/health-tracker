@@ -366,3 +366,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .trig-group + .trig-group { margin-top: 10px; }
 .danger-text { color: var(--danger); }
 .page > .stack { margin: 16px 0; }
+.opt-field { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+.opt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.opt-head .label { margin-bottom: 0; }
+.opt-field.open .opt-head { margin-bottom: 8px; }
+.opt-head > button { flex: none; white-space: nowrap; }

@@ -4,7 +4,7 @@ import {
   BRISTOL, newEntry, newOtherItem, normalizeEntry, uid,
 } from './defaults.js';
 
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.7.0';
 
 const S = {
   view: 'checkin',
@@ -28,6 +28,7 @@ const S = {
   eventId: null,
   eventsDirty: false,
   eventsTimer: null,
+  openFields: new Set(), // past-event questions opened with "+ Add information"
 };
 
 const root = document.getElementById('app');
@@ -857,6 +858,31 @@ function rememberable(ev, flag, selectedCount, content) {
   ];
 }
 
+// A past-event question. Its answer area stays hidden until "+ Add information" is tapped,
+// or while it holds information. "Remove" clears that answer and hides it again.
+function optField(ev, key, label, has, content, clear, clearNote = '') {
+  const id = `${ev.id}:${key}`;
+  const open = has || S.openFields.has(id);
+  return h('div', { class: 'field opt-field' + (open ? ' open' : '') },
+    h('div', { class: 'opt-head' },
+      h('div', { class: 'label' }, label),
+      open
+        ? h('button', {
+          class: 'link small muted',
+          onclick: async () => {
+            if (has && !(await confirmBox('Remove this information?', `This clears your answer to "${label}". ${clearNote}`.trim(), 'Remove', true))) return;
+            S.openFields.delete(id);
+            if (has) updEvent(ev.id, clear); else render();
+          },
+        }, has ? 'Remove' : 'Close')
+        : h('button', { class: 'btn btn-outline btn-small', onclick: () => { S.openFields.add(id); render(); } }, '+ Add information')),
+    open && content());
+}
+
+function needCategory() {
+  return h('p', { class: 'hint' }, 'Add a category first to choose from your lists.');
+}
+
 function viewEvent() {
   const ev = S.events.find((x) => x.id === S.eventId);
   if (!ev) { S.view = 'events'; return viewEvents(); }
@@ -874,12 +900,15 @@ function viewEvent() {
       h('span', { class: 'icon-btn', 'aria-hidden': 'true' })),
 
     h('section', { class: 'card' }, h('div', { class: 'card-body' },
-      field('What happened?',
-        h('input', { type: 'text', class: 'text-in', value: ev.title, placeholder: 'e.g. Migraine that sent me to urgent care',
-          oninput: (e) => set((x) => { x.title = e.target.value; }, false) })),
+      h('p', { class: 'hint' }, 'Tap "+ Add information" on any question that applies. Questions you skip stay empty.'),
 
-      field('When? (approximate is fine)',
-        h('div', { class: 'date-approx' },
+      optField(ev, 'title', 'What happened?', !!ev.title,
+        () => h('input', { type: 'text', class: 'text-in', value: ev.title, placeholder: 'e.g. Migraine that sent me to urgent care',
+          oninput: (e) => set((x) => { x.title = e.target.value; }, false) }),
+        (x) => { x.title = ''; }),
+
+      optField(ev, 'date', 'When? (approximate is fine)', !!(ev.date.year || ev.date.month),
+        () => h('div', { class: 'date-approx' },
           h('label', {}, h('span', { class: 'mini-label' }, 'Year'),
             h('input', { type: 'number', inputmode: 'numeric', class: 'num-in wide', placeholder: 'Year', min: 1900, max: new Date().getFullYear(),
               value: ev.date.year ?? '', oninput: (e) => set((x) => { x.date.year = numOrNull(e.target.value); }, false) })),
@@ -896,42 +925,58 @@ function viewEvent() {
             Object.entries(SEASONS).map(([k, [lbl]]) => h('option', { value: k, selected: monthVal === k }, lbl)))),
           dayAllowed && h('label', {}, h('span', { class: 'mini-label' }, 'Day'),
             h('input', { type: 'number', inputmode: 'numeric', class: 'num-in', placeholder: 'Day', min: 1, max: 31,
-              value: ev.date.day ?? '', oninput: (e) => set((x) => { x.date.day = numOrNull(e.target.value); }, false) })))),
+              value: ev.date.day ?? '', oninput: (e) => set((x) => { x.date.day = numOrNull(e.target.value); }, false) }))),
+        (x) => { x.date = { year: null, month: null, day: null }; }),
 
-      field('How long did it last? (approximate)',
-        h('div', { class: 'row-wrap' },
-          h('span', { class: 'muted' }, 'About'),
-          h('input', { type: 'number', inputmode: 'decimal', class: 'num-in', placeholder: '–', min: 0,
-            value: ev.duration.amount ?? '', oninput: (e) => set((x) => { x.duration.amount = numOrNull(e.target.value); }, false) })),
-        h('div', { class: 'mt' }, seg(DURATION_UNITS, ev.duration.unit, (v) => set((x) => { x.duration.unit = v; })))),
+      optField(ev, 'duration', 'How long did it last? (approximate)', ev.duration.amount != null || !!ev.duration.unit,
+        () => [
+          h('div', { class: 'row-wrap' },
+            h('span', { class: 'muted' }, 'About'),
+            h('input', { type: 'number', inputmode: 'decimal', class: 'num-in', placeholder: '–', min: 0,
+              value: ev.duration.amount ?? '', oninput: (e) => set((x) => { x.duration.amount = numOrNull(e.target.value); }, false) })),
+          h('div', { class: 'mt' }, seg(DURATION_UNITS, ev.duration.unit, (v) => set((x) => { x.duration.unit = v; }))),
+        ],
+        (x) => { x.duration = { amount: null, unit: null }; }),
 
-      field('How well do you remember it?', levelPicker(CONFIDENCE, ev.confidence, (v) => set((x) => { x.confidence = v; }))),
+      optField(ev, 'confidence', 'How well do you remember it?', ev.confidence != null,
+        () => levelPicker(CONFIDENCE, ev.confidence, (v) => set((x) => { x.confidence = v; })),
+        (x) => { x.confidence = null; }),
 
-      field('Category',
-        seg(Object.entries(CAT_LABEL).map(([v, label]) => ({ v, label })), ev.category, async (v) => {
+      optField(ev, 'category', 'Category', !!ev.category,
+        () => seg(Object.entries(CAT_LABEL).map(([v, label]) => ({ v, label })), ev.category, async (v) => {
           const picked = ev.symptoms.length + ev.triggers.length + ev.meds.length;
           if (picked && !(await confirmBox('Change category?', 'Symptoms, triggers and medications you picked will be cleared, since each category has its own lists.', 'Change'))) return;
           set((x) => { x.category = v; x.symptoms = []; x.triggers = []; x.meds = []; });
         }),
-        !L && h('p', { class: 'hint' }, 'Pick a category to choose symptoms, triggers and medications from your lists.')),
+        (x) => { x.category = null; x.symptoms = []; x.triggers = []; x.meds = []; x.unknown = { symptoms: false, triggers: false, meds: false }; },
+        'This also clears any symptoms, triggers and medications you picked.'),
 
-      L && field('Symptoms', rememberable(ev, 'symptoms', ev.symptoms.length,
-        chips(L.sym, ev.symptoms, (name, on) => set((x) => toggleIn(x.symptoms, name, on))))),
+      optField(ev, 'symptoms', 'Symptoms', ev.symptoms.length > 0 || ev.unknown.symptoms,
+        () => (L ? rememberable(ev, 'symptoms', ev.symptoms.length,
+          chips(L.sym, ev.symptoms, (name, on) => set((x) => toggleIn(x.symptoms, name, on)))) : needCategory()),
+        (x) => { x.symptoms = []; x.unknown.symptoms = false; }),
 
-      L && field('Possible triggers', rememberable(ev, 'triggers', ev.triggers.length,
-        L.trig.map(([key, label]) => h('div', { class: 'trig-group' },
-          label && h('div', { class: 'mini-label' }, label),
-          chips(key, ev.triggers, (name, on) => set((x) => toggleIn(x.triggers, name, on))))))),
+      optField(ev, 'triggers', 'Possible triggers', ev.triggers.length > 0 || ev.unknown.triggers,
+        () => (L ? rememberable(ev, 'triggers', ev.triggers.length,
+          L.trig.map(([key, label]) => h('div', { class: 'trig-group' },
+            label && h('div', { class: 'mini-label' }, label),
+            chips(key, ev.triggers, (name, on) => set((x) => toggleIn(x.triggers, name, on)))))) : needCategory()),
+        (x) => { x.triggers = []; x.unknown.triggers = false; }),
 
-      L && field('Medications & remedies', rememberable(ev, 'meds', ev.meds.length, [
-        chips(L.meds, ev.meds.map((m) => m.name), (name, on) => set((x) => toggleObj(x.meds, name, on, (n) => ({ name: n, helped: null })))),
-        ev.meds.map((m) => helpedRow(m, (v) => set((x) => { x.meds.find((y) => y.name === m.name).helped = v; }))),
-      ])),
+      optField(ev, 'meds', 'Medications & remedies', ev.meds.length > 0 || ev.unknown.meds,
+        () => (L ? rememberable(ev, 'meds', ev.meds.length, [
+          chips(L.meds, ev.meds.map((m) => m.name), (name, on) => set((x) => toggleObj(x.meds, name, on, (n) => ({ name: n, helped: null })))),
+          ev.meds.map((m) => helpedRow(m, (v) => set((x) => { x.meds.find((y) => y.name === m.name).helped = v; }))),
+        ]) : needCategory()),
+        (x) => { x.meds = []; x.unknown.meds = false; }),
 
-      field('How much did it affect your life?',
-        impactPicker(ev.impact, (v) => set((x) => { x.impact = v; }), ev.category === 'migraine' ? 'Pain' : 'Symptoms')),
+      optField(ev, 'impact', 'How much did it affect your life?', ev.impact != null,
+        () => impactPicker(ev.impact, (v) => set((x) => { x.impact = v; }), ev.category === 'migraine' ? 'Pain' : 'Symptoms'),
+        (x) => { x.impact = null; }),
 
-      field('Notes', notesBox(ev.notes, (v) => set((x) => { x.notes = v; }, false))))),
+      optField(ev, 'notes', 'Notes', !!ev.notes,
+        () => notesBox(ev.notes, (v) => set((x) => { x.notes = v; }, false)),
+        (x) => { x.notes = ''; }))),
 
     h('div', { class: 'stack' },
       h('button', { class: 'btn btn-primary', onclick: closeEvent }, 'Done'),

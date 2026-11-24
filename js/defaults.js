@@ -84,6 +84,15 @@ export function impactScale(noun) {
   ];
 }
 
+// Follow-up questions when IBS symptoms trigger a fainting episode.
+// Each is answered yes/no. To add a question, add a line with a new unique id.
+export const EPISODE_QUESTIONS = [
+  { id: 'hotFlashes', q: 'Did you get hot flashes?' },
+  { id: 'intensePain', q: 'Did you have increased, intense intestinal pain?' },
+  { id: 'gasDiarrhea', q: 'Did it result in gas or diarrhea?' },
+  { id: 'fainted', q: 'Did you faint?' },
+];
+
 // "Did it help?" scale: 0 = not at all, 4 = completely fixed it.
 export const HELP_SCALE = [
   { v: 0, label: 'Not at all' },
@@ -131,6 +140,8 @@ export function newEntry(date) {
       status: null, // null = not answered, 'none' = no symptoms, 'yes' = had symptoms
       impact: null, // 0-4, see impactScale()
       symptoms: [], // [{ name, sev: 'mild'|'moderate'|'severe'|null }]
+      episode: null, // did symptoms trigger a fainting episode? true | false | null
+      episodeAnswers: {}, // { [EPISODE_QUESTIONS id]: true | false }
       bms: [], // [{ bristol: 1-7|null }]
       foods: [],
       triggers: [],

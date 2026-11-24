@@ -1,10 +1,10 @@
 import * as db from './db.js';
 import {
-  LIST_GROUPS, LIST_LABELS, DEFAULT_LISTS, SUGGESTIONS, impactScale, HELP_SCALE, SEVERITY3, SLEEP_QUALITY, INTENSITY,
+  LIST_GROUPS, LIST_LABELS, DEFAULT_LISTS, SUGGESTIONS, impactScale, EPISODE_QUESTIONS, HELP_SCALE, SEVERITY3, SLEEP_QUALITY, INTENSITY,
   BRISTOL, newEntry, newOtherItem, normalizeEntry, uid,
 } from './defaults.js';
 
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 
 const S = {
   view: 'checkin',
@@ -253,6 +253,8 @@ async function askNewItem(listKey) {
   });
 }
 
+const YES_NO = [{ v: false, label: 'No' }, { v: true, label: 'Yes' }];
+
 function seg(options, value, onSet, extraClass = '') {
   return h('div', { class: 'seg ' + extraClass },
     options.map((o) => h('button', {
@@ -443,6 +445,19 @@ function ibsBody(s) {
       s.symptoms.map((sym) => h('div', { class: 'subrow subrow-inline' },
         h('div', { class: 'subrow-title' }, sym.name),
         seg(SEVERITY3, sym.sev, (v) => upd((e) => { e.ibs.symptoms.find((x) => x.name === sym.name).sev = v; }), 'seg-sev')))),
+
+    field('Did this trigger an episode?',
+      seg(YES_NO, s.episode, (v) => upd((e) => {
+        e.ibs.episode = v;
+        if (v !== true) e.ibs.episodeAnswers = {};
+      })),
+      s.episode === true && h('div', { class: 'subrow episode' },
+        EPISODE_QUESTIONS.map((item) => h('div', { class: 'episode-q' },
+          h('div', { class: 'episode-text' }, item.q),
+          seg(YES_NO, s.episodeAnswers[item.id] ?? null, (v) => upd((e) => {
+            if (v == null) delete e.ibs.episodeAnswers[item.id];
+            else e.ibs.episodeAnswers[item.id] = v;
+          }), 'seg-yn'))))),
 
     field('Bowel movements',
       h('div', { class: 'row-between' },

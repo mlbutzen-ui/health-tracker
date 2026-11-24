@@ -334,3 +334,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .impact-btn.on .impact-desc { color: rgba(255, 255, 255, .9); }
 .impact-btn.on .impact-label::before { content: "✓ "; }
 .subrow .impact-btn:not(.on) { background: var(--card); }
+
+/* ----- IBS episode follow-up ----- */
+.episode-q { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.episode-q + .episode-q { border-top: 1px solid var(--line); }
+.episode-text { flex: 1; font-size: .92rem; }
+.seg-yn { flex: none; width: 128px; flex-wrap: nowrap; }

@@ -4,7 +4,7 @@ import {
   BRISTOL, newEntry, newOtherItem, normalizeEntry, uid,
 } from './defaults.js';
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 
 const S = {
   view: 'checkin',
@@ -493,20 +493,7 @@ function migraineBody(s) {
     field('What was it?', seg([{ v: 'migraine', label: 'Migraine' }, { v: 'headache', label: 'Headache' }], s.kind,
       (v) => upd((e) => { e.migraine.kind = v; }))),
 
-    field('When did it start and how long did it last?',
-      h('div', { class: 'row-wrap' },
-        h('label', { class: 'inline-field' }, h('span', {}, 'Start'),
-          h('input', { type: 'time', class: 'time-in', value: s.start, onchange: (ev) => upd((e) => { e.migraine.start = ev.target.value; }, false) })),
-        h('label', { class: 'inline-field' }, h('span', {}, 'Lasted'),
-          h('input', { type: 'number', inputmode: 'numeric', min: 0, max: 72, class: 'num-in', placeholder: '0', value: s.durH ?? '',
-            oninput: (ev) => upd((e) => { e.migraine.durH = numOrNull(ev.target.value); }, false) }),
-          h('span', {}, 'hr'),
-          h('input', { type: 'number', inputmode: 'numeric', min: 0, max: 59, class: 'num-in', placeholder: '0', value: s.durM ?? '',
-            oninput: (ev) => upd((e) => { e.migraine.durM = numOrNull(ev.target.value); }, false) }),
-          h('span', {}, 'min'))),
-      h('label', { class: 'check' },
-        h('input', { type: 'checkbox', checked: s.ongoing, onchange: (ev) => upd((e) => { e.migraine.ongoing = ev.target.checked; }, false) }),
-        ' Still going when I logged this')),
+    field('Did it end today?', seg(YES_NO, s.ended, (v) => upd((e) => { e.migraine.ended = v; }))),
 
     field('How much did it affect your day? (at its worst)', impactPicker(s.impact, (v) => upd((e) => { e.migraine.impact = v; }), 'Pain')),
 

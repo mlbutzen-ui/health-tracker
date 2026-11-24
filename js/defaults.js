@@ -89,7 +89,8 @@ export function impactScale(noun) {
 export const EPISODE_QUESTIONS = [
   { id: 'hotFlashes', q: 'Did you get hot flashes?' },
   { id: 'intensePain', q: 'Did you have increased, intense intestinal pain?' },
-  { id: 'gasDiarrhea', q: 'Did it result in gas or diarrhea?' },
+  { id: 'gas', q: 'Did it result in gas?' },
+  { id: 'diarrhea', q: 'Did it result in diarrhea?' },
   { id: 'fainted', q: 'Did you faint?' },
 ];
 
@@ -151,10 +152,7 @@ export function newEntry(date) {
     migraine: {
       status: null,
       kind: null, // 'migraine' | 'headache'
-      start: '',
-      durH: null,
-      durM: null,
-      ongoing: false,
+      ended: null, // did it end today? true | false | null (migraines can last days)
       impact: null,
       locations: [],
       symptoms: [],

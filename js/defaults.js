@@ -137,6 +137,7 @@ export function newPastEvent() {
     confidence: null, // 1-3, see CONFIDENCE
     category: null, // 'ibs'|'migraine'|'other'
     symptoms: [],
+    foods: [], // IBS trigger foods (IBS events only)
     triggers: [],
     meds: [], // [{ name, helped }]
     unknown: { symptoms: false, triggers: false, meds: false }, // "I don't remember"

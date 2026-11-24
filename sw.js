@@ -1,6 +1,6 @@
 // Service worker: saves the app's files on the phone so it works offline.
 // Bump CACHE whenever any app file changes so phones pick up the new version.
-const CACHE = 'health-tracker-v8';
+const CACHE = 'health-tracker-v9';
 const FILES = [
   './',
   './index.html',

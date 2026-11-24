@@ -4,7 +4,7 @@ import {
   BRISTOL, newEntry, newOtherItem, normalizeEntry, uid,
 } from './defaults.js';
 
-export const APP_VERSION = '1.7.0';
+export const APP_VERSION = '1.7.1';
 
 const S = {
   view: 'checkin',
@@ -723,9 +723,10 @@ function newThingsSection(e) {
 
 const CAT_LABEL = { ibs: 'IBS', migraine: 'Migraine / headache', other: 'Other' };
 const CAT_LISTS = {
-  ibs: { sym: 'ibsSymptoms', trig: [['ibsFoods', 'Foods'], ['ibsTriggers', 'Other triggers']], meds: 'ibsMeds' },
-  migraine: { sym: 'migSymptoms', trig: [['migTriggers', null]], meds: 'migMeds' },
-  other: { sym: 'otherSymptoms', trig: [['otherTriggers', null]], meds: 'otherMeds' },
+  // trig: [list key, group label, event field]. Each group saves to its own field.
+  ibs: { sym: 'ibsSymptoms', trig: [['ibsFoods', 'Foods', 'foods'], ['ibsTriggers', 'Other triggers', 'triggers']], meds: 'ibsMeds' },
+  migraine: { sym: 'migSymptoms', trig: [['migTriggers', null, 'triggers']], meds: 'migMeds' },
+  other: { sym: 'otherSymptoms', trig: [['otherTriggers', null, 'triggers']], meds: 'otherMeds' },
 };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const SEASONS = { winter: ['Winter', 1], spring: ['Spring', 4], summer: ['Summer', 7], fall: ['Fall', 10] };
@@ -850,7 +851,10 @@ function rememberable(ev, flag, selectedCount, content) {
           && !(await confirmBox('Clear what you picked?', 'Marking this as "I don’t remember" clears the items you selected here.', 'Clear them'))) return;
         updEvent(ev.id, (x) => {
           x.unknown[flag] = !on;
-          if (!on) { if (flag === 'meds') x.meds = []; else x[flag] = []; }
+          if (!on) {
+            x[flag] = [];
+            if (flag === 'triggers') x.foods = [];
+          }
         });
       },
     }, 'I don’t remember'),
@@ -944,11 +948,11 @@ function viewEvent() {
 
       optField(ev, 'category', 'Category', !!ev.category,
         () => seg(Object.entries(CAT_LABEL).map(([v, label]) => ({ v, label })), ev.category, async (v) => {
-          const picked = ev.symptoms.length + ev.triggers.length + ev.meds.length;
+          const picked = ev.symptoms.length + ev.foods.length + ev.triggers.length + ev.meds.length;
           if (picked && !(await confirmBox('Change category?', 'Symptoms, triggers and medications you picked will be cleared, since each category has its own lists.', 'Change'))) return;
-          set((x) => { x.category = v; x.symptoms = []; x.triggers = []; x.meds = []; });
+          set((x) => { x.category = v; x.symptoms = []; x.foods = []; x.triggers = []; x.meds = []; });
         }),
-        (x) => { x.category = null; x.symptoms = []; x.triggers = []; x.meds = []; x.unknown = { symptoms: false, triggers: false, meds: false }; },
+        (x) => { x.category = null; x.symptoms = []; x.foods = []; x.triggers = []; x.meds = []; x.unknown = { symptoms: false, triggers: false, meds: false }; },
         'This also clears any symptoms, triggers and medications you picked.'),
 
       optField(ev, 'symptoms', 'Symptoms', ev.symptoms.length > 0 || ev.unknown.symptoms,
@@ -956,12 +960,12 @@ function viewEvent() {
           chips(L.sym, ev.symptoms, (name, on) => set((x) => toggleIn(x.symptoms, name, on)))) : needCategory()),
         (x) => { x.symptoms = []; x.unknown.symptoms = false; }),
 
-      optField(ev, 'triggers', 'Possible triggers', ev.triggers.length > 0 || ev.unknown.triggers,
-        () => (L ? rememberable(ev, 'triggers', ev.triggers.length,
-          L.trig.map(([key, label]) => h('div', { class: 'trig-group' },
+      optField(ev, 'triggers', 'Possible triggers', ev.foods.length + ev.triggers.length > 0 || ev.unknown.triggers,
+        () => (L ? rememberable(ev, 'triggers', ev.foods.length + ev.triggers.length,
+          L.trig.map(([key, label, fld]) => h('div', { class: 'trig-group' },
             label && h('div', { class: 'mini-label' }, label),
-            chips(key, ev.triggers, (name, on) => set((x) => toggleIn(x.triggers, name, on)))))) : needCategory()),
-        (x) => { x.triggers = []; x.unknown.triggers = false; }),
+            chips(key, ev[fld], (name, on) => set((x) => toggleIn(x[fld], name, on)))))) : needCategory()),
+        (x) => { x.foods = []; x.triggers = []; x.unknown.triggers = false; }),
 
       optField(ev, 'meds', 'Medications & remedies', ev.meds.length > 0 || ev.unknown.meds,
         () => (L ? rememberable(ev, 'meds', ev.meds.length, [
@@ -992,6 +996,21 @@ function viewEvent() {
       }, 'Delete this event')));
 }
 
+// Version 1.7.1: IBS foods and other triggers were saved together in past events.
+// Move any item that's on the Foods list into its own field. Returns true if anything moved.
+function separateEventFoods() {
+  let moved = false;
+  for (const ev of S.events) {
+    if (ev.category !== 'ibs' || !ev.triggers.length) continue;
+    const foods = ev.triggers.filter((t) => S.lists.ibsFoods.includes(t) && !S.lists.ibsTriggers.includes(t));
+    if (!foods.length) continue;
+    ev.foods = [...new Set([...ev.foods, ...foods])];
+    ev.triggers = ev.triggers.filter((t) => !foods.includes(t));
+    moved = true;
+  }
+  return moved;
+}
+
 function renameInEvent(ev, key, from, to) {
   const L = ev.category && CAT_LISTS[ev.category];
   if (!L) return false;
@@ -1002,7 +1021,8 @@ function renameInEvent(ev, key, from, to) {
     return true;
   };
   if (key === L.sym) return swap(ev.symptoms);
-  if (L.trig.some(([k]) => k === key)) return swap(ev.triggers);
+  const group = L.trig.find(([k]) => k === key);
+  if (group) return swap(ev[group[2]]);
   if (key === L.meds) {
     let c = false;
     ev.meds.forEach((m) => { if (m.name === from) { m.name = to; c = true; } });
@@ -1483,6 +1503,7 @@ async function init() {
   S.lastBackup = lastBackup || null;
   S.entryCount = count || 0;
   S.events = ((await db.getMeta('pastEvents')) || []).map(normalizePastEvent);
+  if (separateEventFoods()) await db.setMeta('pastEvents', clone(S.events));
   if (S.pin) {
     root.hidden = true;
     lockApp();

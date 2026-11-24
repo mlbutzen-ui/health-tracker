@@ -1,10 +1,10 @@
 import * as db from './db.js';
 import {
-  LIST_GROUPS, LIST_LABELS, DEFAULT_LISTS, SUGGESTIONS, impactScale, STRESS_SCALE, EPISODE_QUESTIONS, HELP_SCALE, SEVERITY3, SLEEP_QUALITY, INTENSITY,
+  LIST_GROUPS, LIST_LABELS, DEFAULT_LISTS, SUGGESTIONS, impactScale, STRESS_SCALE, CONFIDENCE, newPastEvent, normalizePastEvent, EPISODE_QUESTIONS, HELP_SCALE, SEVERITY3, SLEEP_QUALITY, INTENSITY,
   BRISTOL, newEntry, newOtherItem, normalizeEntry, uid,
 } from './defaults.js';
 
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.6.0';
 
 const S = {
   view: 'checkin',
@@ -24,6 +24,10 @@ const S = {
   locked: false,
   hiddenAt: null,
   updateReady: false,
+  events: [], // past events (historical records)
+  eventId: null,
+  eventsDirty: false,
+  eventsTimer: null,
 };
 
 const root = document.getElementById('app');
@@ -134,6 +138,7 @@ function markDirty() {
 }
 
 async function flush() {
+  await flushEvents();
   clearTimeout(S.saveTimer);
   if (!S.dirty || !S.entry) return;
   S.dirty = false;
@@ -172,6 +177,7 @@ async function saveLists() {
 
 async function goDate(d) {
   if (d > S.today) d = S.today;
+  pruneEmptyEvent();
   await flush();
   S.date = d;
   S.entry = normalizeEntry(await db.getEntry(d), d);
@@ -184,6 +190,7 @@ async function goDate(d) {
 }
 
 function goView(v) {
+  if (v !== 'event') pruneEmptyEvent();
   flush();
   S.view = v;
   render();
@@ -192,18 +199,20 @@ function goView(v) {
 
 function render() {
   const y = window.scrollY;
-  const main = S.view === 'settings' ? viewSettings() : viewCheckin();
+  const views = { settings: viewSettings, events: viewEvents, event: viewEvent };
+  const main = (views[S.view] || viewCheckin)();
   root.replaceChildren(...[updateBanner(), main, bottomNav()].filter(Boolean));
   window.scrollTo(0, y);
 }
 
 function bottomNav() {
   const tab = (v, icon, label) => h('button', {
-    class: 'tab' + (S.view === v ? ' on' : ''),
+    class: 'tab' + (S.view === v || (v === 'events' && S.view === 'event') ? ' on' : ''),
     onclick: () => (v === 'checkin' ? goDate(S.date) : goView(v)),
   }, h('span', { class: 'tab-icon', 'aria-hidden': 'true' }, icon), h('span', {}, label));
   return h('nav', { class: 'bottom-nav' },
     tab('checkin', '✎', 'Check-in'),
+    tab('events', '⏲', 'Past events'),
     tab('settings', '⚙', 'Settings'));
 }
 
@@ -709,6 +718,254 @@ function newThingsSection(e) {
       h('div', { class: 'new-add' }, catSel, txt, h('button', { class: 'btn btn-primary', onclick: add }, 'Add'))));
 }
 
+/* ---------------- past events (historical records) ---------------- */
+
+const CAT_LABEL = { ibs: 'IBS', migraine: 'Migraine / headache', other: 'Other' };
+const CAT_LISTS = {
+  ibs: { sym: 'ibsSymptoms', trig: [['ibsFoods', 'Foods'], ['ibsTriggers', 'Other triggers']], meds: 'ibsMeds' },
+  migraine: { sym: 'migSymptoms', trig: [['migTriggers', null]], meds: 'migMeds' },
+  other: { sym: 'otherSymptoms', trig: [['otherTriggers', null]], meds: 'otherMeds' },
+};
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const SEASONS = { winter: ['Winter', 1], spring: ['Spring', 4], summer: ['Summer', 7], fall: ['Fall', 10] };
+const DURATION_UNITS = [{ v: 'hours', label: 'Hours' }, { v: 'days', label: 'Days' }, { v: 'weeks', label: 'Weeks' }, { v: 'months', label: 'Months' }];
+
+function eventDateLabel(ev) {
+  const { year, month, day } = ev.date;
+  if (!year && !month) return 'Date unknown';
+  let txt;
+  if (typeof month === 'string') txt = SEASONS[month][0];
+  else if (month) txt = MONTHS[month - 1] + (day ? ` ${day}` : '');
+  if (txt && day && typeof month === 'number' && year) return `${txt}, ${year}`;
+  return (txt ? `About ${txt} ` : 'About ') + (year || '(year unknown)');
+}
+
+function eventSortKey(ev) {
+  const { year, month, day } = ev.date;
+  if (!year) return -1;
+  const m = typeof month === 'string' ? SEASONS[month][1] : month || 6;
+  return year * 10000 + m * 100 + (day || 15);
+}
+
+function durationLabel(ev) {
+  const { amount, unit } = ev.duration;
+  if (amount == null) return null;
+  const u = unit || 'days';
+  return `Lasted about ${amount} ${amount === 1 ? u.slice(0, -1) : u}`;
+}
+
+function confidenceShort(ev) {
+  const c = CONFIDENCE.find((x) => x.v === ev.confidence);
+  return c ? c.label : null;
+}
+
+function isEmptyEvent(ev) {
+  const blank = newPastEvent();
+  const strip = (e) => JSON.stringify({ ...e, id: 0, createdAt: 0, updatedAt: 0 });
+  return strip(ev) === strip({ ...blank, id: ev.id });
+}
+
+function markEventsDirty() {
+  S.eventsDirty = true;
+  setSaveStatus('Saving…');
+  clearTimeout(S.eventsTimer);
+  S.eventsTimer = setTimeout(flushEvents, 400);
+}
+
+async function flushEvents() {
+  clearTimeout(S.eventsTimer);
+  if (!S.eventsDirty) return;
+  S.eventsDirty = false;
+  try {
+    await db.setMeta('pastEvents', clone(S.events));
+    setSaveStatus('Saved ✓');
+  } catch (err) {
+    S.eventsDirty = true;
+    setSaveStatus('Not saved!');
+    toast('Could not save: ' + err.message);
+  }
+}
+
+function updEvent(id, fn, rerender = true) {
+  const ev = S.events.find((x) => x.id === id);
+  if (!ev) return;
+  fn(ev);
+  ev.updatedAt = new Date().toISOString();
+  markEventsDirty();
+  if (rerender) render();
+}
+
+function addEvent() {
+  const ev = newPastEvent();
+  S.events.push(ev);
+  openEvent(ev.id);
+}
+
+function openEvent(id) {
+  S.eventId = id;
+  S.saveStatus = '';
+  goView('event');
+}
+
+// Drop a past event that was opened but never filled in.
+function pruneEmptyEvent() {
+  if (S.view !== 'event') return;
+  const ev = S.events.find((x) => x.id === S.eventId);
+  if (ev && isEmptyEvent(ev)) {
+    S.events = S.events.filter((x) => x.id !== ev.id);
+    markEventsDirty();
+  }
+}
+
+function closeEvent() {
+  goView('events');
+}
+
+function viewEvents() {
+  const evs = [...S.events].sort((a, b) => eventSortKey(b) - eventSortKey(a));
+  return h('main', { class: 'page' },
+    h('header', { class: 'page-head' }, h('h1', {}, 'Past events')),
+    h('p', { class: 'small muted' }, 'Record health events from before you started daily check-ins. Nothing is required. Past events are kept separate from your daily entries so gaps between them aren’t mistaken for symptom-free days.'),
+    h('button', { class: 'btn btn-primary btn-block', onclick: addEvent }, '+ Add past event'),
+    evs.length === 0
+      ? h('p', { class: 'hint center' }, 'No past events yet.')
+      : h('div', { class: 'event-list' }, evs.map((ev) => h('button', { class: 'event-card', onclick: () => openEvent(ev.id) },
+        h('div', { class: 'event-top' },
+          h('span', { class: 'event-date' }, eventDateLabel(ev)),
+          ev.category && h('span', { class: 'tag' }, CAT_LABEL[ev.category])),
+        h('div', { class: 'event-title' }, ev.title || h('span', { class: 'muted' }, '(no description)')),
+        h('div', { class: 'event-meta' }, [durationLabel(ev), confidenceShort(ev)].filter(Boolean).join(' · '))))));
+}
+
+// "I don't remember" button plus the content it hides when switched on.
+function rememberable(ev, flag, selectedCount, content) {
+  const on = !!ev.unknown[flag];
+  return [
+    h('button', {
+      class: 'chip chip-unknown' + (on ? ' on' : ''),
+      'aria-pressed': on ? 'true' : 'false',
+      onclick: async () => {
+        if (!on && selectedCount > 0
+          && !(await confirmBox('Clear what you picked?', 'Marking this as "I don’t remember" clears the items you selected here.', 'Clear them'))) return;
+        updEvent(ev.id, (x) => {
+          x.unknown[flag] = !on;
+          if (!on) { if (flag === 'meds') x.meds = []; else x[flag] = []; }
+        });
+      },
+    }, 'I don’t remember'),
+    !on && h('div', { class: 'mt' }, content),
+  ];
+}
+
+function viewEvent() {
+  const ev = S.events.find((x) => x.id === S.eventId);
+  if (!ev) { S.view = 'events'; return viewEvents(); }
+  const set = (fn, rr = true) => updEvent(ev.id, fn, rr);
+  const L = ev.category && CAT_LISTS[ev.category];
+  const monthVal = ev.date.month == null ? '' : String(ev.date.month);
+  const dayAllowed = typeof ev.date.month === 'number';
+
+  return h('main', { class: 'page' },
+    h('header', { class: 'topbar' },
+      h('button', { class: 'icon-btn', 'aria-label': 'Back to past events', onclick: closeEvent }, '‹'),
+      h('div', { class: 'date-center' },
+        h('div', { class: 'date-main' }, 'Past event'),
+        h('div', { class: 'save-row' }, h('span', { id: 'save-status', class: 'save-status' }, S.saveStatus))),
+      h('span', { class: 'icon-btn', 'aria-hidden': 'true' })),
+
+    h('section', { class: 'card' }, h('div', { class: 'card-body' },
+      field('What happened?',
+        h('input', { type: 'text', class: 'text-in', value: ev.title, placeholder: 'e.g. Migraine that sent me to urgent care',
+          oninput: (e) => set((x) => { x.title = e.target.value; }, false) })),
+
+      field('When? (approximate is fine)',
+        h('div', { class: 'date-approx' },
+          h('label', {}, h('span', { class: 'mini-label' }, 'Year'),
+            h('input', { type: 'number', inputmode: 'numeric', class: 'num-in wide', placeholder: 'Year', min: 1900, max: new Date().getFullYear(),
+              value: ev.date.year ?? '', oninput: (e) => set((x) => { x.date.year = numOrNull(e.target.value); }, false) })),
+          h('label', {}, h('span', { class: 'mini-label' }, 'Month or season'),
+            h('select', {
+              class: 'select', onchange: (e) => set((x) => {
+                const v = e.target.value;
+                x.date.month = v === '' ? null : (SEASONS[v] ? v : Number(v));
+                if (typeof x.date.month !== 'number') x.date.day = null;
+              }),
+            },
+            h('option', { value: '' }, 'Not sure'),
+            MONTHS.map((m, i) => h('option', { value: String(i + 1), selected: monthVal === String(i + 1) }, m)),
+            Object.entries(SEASONS).map(([k, [lbl]]) => h('option', { value: k, selected: monthVal === k }, lbl)))),
+          dayAllowed && h('label', {}, h('span', { class: 'mini-label' }, 'Day'),
+            h('input', { type: 'number', inputmode: 'numeric', class: 'num-in', placeholder: 'Day', min: 1, max: 31,
+              value: ev.date.day ?? '', oninput: (e) => set((x) => { x.date.day = numOrNull(e.target.value); }, false) })))),
+
+      field('How long did it last? (approximate)',
+        h('div', { class: 'row-wrap' },
+          h('span', { class: 'muted' }, 'About'),
+          h('input', { type: 'number', inputmode: 'decimal', class: 'num-in', placeholder: '–', min: 0,
+            value: ev.duration.amount ?? '', oninput: (e) => set((x) => { x.duration.amount = numOrNull(e.target.value); }, false) })),
+        h('div', { class: 'mt' }, seg(DURATION_UNITS, ev.duration.unit, (v) => set((x) => { x.duration.unit = v; })))),
+
+      field('How well do you remember it?', levelPicker(CONFIDENCE, ev.confidence, (v) => set((x) => { x.confidence = v; }))),
+
+      field('Category',
+        seg(Object.entries(CAT_LABEL).map(([v, label]) => ({ v, label })), ev.category, async (v) => {
+          const picked = ev.symptoms.length + ev.triggers.length + ev.meds.length;
+          if (picked && !(await confirmBox('Change category?', 'Symptoms, triggers and medications you picked will be cleared, since each category has its own lists.', 'Change'))) return;
+          set((x) => { x.category = v; x.symptoms = []; x.triggers = []; x.meds = []; });
+        }),
+        !L && h('p', { class: 'hint' }, 'Pick a category to choose symptoms, triggers and medications from your lists.')),
+
+      L && field('Symptoms', rememberable(ev, 'symptoms', ev.symptoms.length,
+        chips(L.sym, ev.symptoms, (name, on) => set((x) => toggleIn(x.symptoms, name, on))))),
+
+      L && field('Possible triggers', rememberable(ev, 'triggers', ev.triggers.length,
+        L.trig.map(([key, label]) => h('div', { class: 'trig-group' },
+          label && h('div', { class: 'mini-label' }, label),
+          chips(key, ev.triggers, (name, on) => set((x) => toggleIn(x.triggers, name, on))))))),
+
+      L && field('Medications & remedies', rememberable(ev, 'meds', ev.meds.length, [
+        chips(L.meds, ev.meds.map((m) => m.name), (name, on) => set((x) => toggleObj(x.meds, name, on, (n) => ({ name: n, helped: null })))),
+        ev.meds.map((m) => helpedRow(m, (v) => set((x) => { x.meds.find((y) => y.name === m.name).helped = v; }))),
+      ])),
+
+      field('How much did it affect your life?',
+        impactPicker(ev.impact, (v) => set((x) => { x.impact = v; }), ev.category === 'migraine' ? 'Pain' : 'Symptoms')),
+
+      field('Notes', notesBox(ev.notes, (v) => set((x) => { x.notes = v; }, false))))),
+
+    h('div', { class: 'stack' },
+      h('button', { class: 'btn btn-primary', onclick: closeEvent }, 'Done'),
+      h('button', {
+        class: 'btn btn-plain danger-text',
+        onclick: async () => {
+          if (!(await confirmBox('Delete this past event?', 'This can’t be undone.', 'Delete', true))) return;
+          S.events = S.events.filter((x) => x.id !== ev.id);
+          markEventsDirty();
+          await flushEvents();
+          goView('events');
+        },
+      }, 'Delete this event')));
+}
+
+function renameInEvent(ev, key, from, to) {
+  const L = ev.category && CAT_LISTS[ev.category];
+  if (!L) return false;
+  const swap = (arr) => {
+    const i = arr.indexOf(from);
+    if (i < 0) return false;
+    if (arr.includes(to)) arr.splice(i, 1); else arr[i] = to;
+    return true;
+  };
+  if (key === L.sym) return swap(ev.symptoms);
+  if (L.trig.some(([k]) => k === key)) return swap(ev.triggers);
+  if (key === L.meds) {
+    let c = false;
+    ev.meds.forEach((m) => { if (m.name === from) { m.name = to; c = true; } });
+    return c;
+  }
+  return false;
+}
+
 /* ---------------- settings ---------------- */
 
 function viewSettings() {
@@ -816,6 +1073,7 @@ async function renameItem(key, oldName) {
   const all = await db.allEntries();
   const changed = all.map((e) => normalizeEntry(e, e.date)).filter((e) => renameInEntry(e, key, oldName, name));
   if (changed.length) await db.putEntries(changed);
+  if (S.events.map((ev) => renameInEvent(ev, key, oldName, name)).some(Boolean)) { markEventsDirty(); await flushEvents(); }
   S.entry = normalizeEntry(await db.getEntry(S.date), S.date);
   toast(changed.length ? `Renamed, and updated ${changed.length} past ${changed.length === 1 ? 'entry' : 'entries'}` : 'Renamed');
   render();
@@ -898,6 +1156,7 @@ function aboutCard() {
     h('div', { class: 'card-head' }, h('h2', {}, 'About')),
     h('div', { class: 'card-body small' },
       h('p', {}, `Days logged: ${S.entryCount}`),
+      h('p', {}, `Past events: ${S.events.length}`),
       h('p', {}, `App version ${APP_VERSION}`),
       h('p', { class: 'muted' }, 'No account, no cloud, no tracking. Your entries are stored in this browser on this phone only.')));
 }
@@ -936,6 +1195,7 @@ async function doBackup(share = false) {
     listsVersion: 2,
     settings: S.settings,
     entries: await db.allEntries(),
+    pastEvents: S.events,
   };
   const name = `health-backup-${dateStr()}.json`;
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
@@ -976,12 +1236,15 @@ async function doRestore(file) {
   }
   const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'unknown date';
   const ok = await confirmBox('Restore this backup?',
-    `It has ${data.entries.length} ${data.entries.length === 1 ? 'day' : 'days'} of entries, saved ${when}. This REPLACES everything currently in the app. Your PIN setting is kept.`,
+    `It has ${data.entries.length} ${data.entries.length === 1 ? 'day' : 'days'} of entries`
+    + (Array.isArray(data.pastEvents) && data.pastEvents.length ? ` and ${data.pastEvents.length} past ${data.pastEvents.length === 1 ? 'event' : 'events'}` : '')
+    + `, saved ${when}. This REPLACES everything currently in the app. Your PIN setting is kept.`,
     'Replace my data', true);
   if (!ok) return;
   const lists = { ...clone(DEFAULT_LISTS), ...(data.lists || {}) };
   const entries = data.entries.filter((e) => e && typeof e.date === 'string').map((e) => normalizeEntry(e, e.date));
-  await db.replaceAll(entries, { lists, listsVersion: data.listsVersion || 1, settings: { ...S.settings, ...(data.settings || {}) } });
+  const pastEvents = Array.isArray(data.pastEvents) ? data.pastEvents.map(normalizePastEvent) : [];
+  await db.replaceAll(entries, { pastEvents, lists, listsVersion: data.listsVersion || 1, settings: { ...S.settings, ...(data.settings || {}) } });
   toast('Backup restored');
   setTimeout(() => location.reload(), 800);
 }
@@ -1174,6 +1437,7 @@ async function init() {
   S.pin = pin || null;
   S.lastBackup = lastBackup || null;
   S.entryCount = count || 0;
+  S.events = ((await db.getMeta('pastEvents')) || []).map(normalizePastEvent);
   if (S.pin) {
     root.hidden = true;
     lockApp();

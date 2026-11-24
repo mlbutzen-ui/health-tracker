@@ -3,7 +3,7 @@
 export const LIST_GROUPS = [
   { title: 'IBS', lists: ['ibsSymptoms', 'ibsFoods', 'ibsTriggers', 'ibsMeds'] },
   { title: 'Migraine / headache', lists: ['migLocations', 'migSymptoms', 'migTriggers', 'migMeds'] },
-  { title: 'Other health issues', lists: ['otherConditions', 'otherSymptoms', 'otherMeds'] },
+  { title: 'Other health issues', lists: ['otherConditions', 'otherSymptoms', 'otherTriggers', 'otherMeds'] },
   { title: 'Daily habits & new things', lists: ['stressSigns', 'exerciseTypes', 'newCategories'] },
 ];
 
@@ -18,6 +18,7 @@ export const LIST_LABELS = {
   migMeds: 'Migraine medications & remedies',
   otherConditions: 'Conditions (what it was)',
   otherSymptoms: 'Symptoms',
+  otherTriggers: 'Triggers',
   otherMeds: 'Medications & remedies',
   stressSigns: 'Stress signs',
   exerciseTypes: 'Exercise types',
@@ -29,7 +30,7 @@ export const LIST_LABELS = {
 export const DEFAULT_LISTS = {
   ibsSymptoms: [], ibsFoods: [], ibsTriggers: [], ibsMeds: [],
   migLocations: [], migSymptoms: [], migTriggers: [], migMeds: [],
-  otherConditions: [], otherSymptoms: [], otherMeds: [],
+  otherConditions: [], otherSymptoms: [], otherTriggers: [], otherMeds: [],
   exerciseTypes: [],
   stressSigns: ['Trouble sleeping', 'Tense jaw or shoulders', 'Racing thoughts', 'Irritability',
     'Trouble concentrating', 'Appetite changes', 'Avoiding tasks', 'Crying'],
@@ -114,6 +115,42 @@ export function stressFromOld(n) {
   if (n <= 6) return 2;
   if (n <= 8) return 3;
   return 4;
+}
+
+// Past events: how well the event is remembered or recorded.
+export const CONFIDENCE = [
+  { v: 1, label: 'Clear', desc: 'I remember this clearly, or it\u2019s clearly recorded.' },
+  { v: 2, label: 'A little fuzzy', desc: 'I remember some of the details, but it\u2019s a little fuzzy.' },
+  { v: 3, label: 'Big picture only', desc: 'I remember the main thing (like having a migraine), but not the details.' },
+];
+
+// A historical record. Every field is optional.
+export function newPastEvent() {
+  const now = new Date().toISOString();
+  return {
+    id: uid(),
+    createdAt: now,
+    updatedAt: now,
+    title: '',
+    date: { year: null, month: null, day: null }, // month: 1-12, or 'winter'|'spring'|'summer'|'fall'
+    duration: { amount: null, unit: null }, // unit: 'hours'|'days'|'weeks'|'months'
+    confidence: null, // 1-3, see CONFIDENCE
+    category: null, // 'ibs'|'migraine'|'other'
+    symptoms: [],
+    triggers: [],
+    meds: [], // [{ name, helped }]
+    unknown: { symptoms: false, triggers: false, meds: false }, // "I don't remember"
+    impact: null, // 0-4, see impactScale()
+    notes: '',
+  };
+}
+
+export function normalizePastEvent(saved) {
+  const base = newPastEvent();
+  if (!saved || typeof saved !== 'object') return base;
+  const out = { ...base, ...saved };
+  for (const k of ['date', 'duration', 'unknown']) out[k] = { ...base[k], ...(saved[k] || {}) };
+  return out;
 }
 
 // "Did it help?" scale: 0 = not at all, 4 = completely fixed it.
